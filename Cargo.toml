@@ -1,0 +1,16 @@
+[package]
+name = "tcp-over-udp-ping-pong"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bstr = "1.12.0"
+clap = { version = "4.5.37", features = ["derive"] }
+ctrlc = { version = "3.4.6", features = ["termination"] }
+embassy-net = { version = "0.7.0", features = ["std", "alloc", "tcp", "proto-ipv4", "medium-ip", "log"] }
+embassy-time-driver = "0.2.0"
+flume = "0.11.1"
+scopeguard = "1.2.0"
+simple_logger = "5.0.0"
+tokio = { version = "1.45.0", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-util = "0.7.15"
