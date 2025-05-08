@@ -176,16 +176,15 @@ const _: () = {
         bytes: Box<[u8]>,
     }
 
+    impl RxToken for UdpRxToken {
+        fn consume<R, F: FnOnce(&mut [u8]) -> R>(mut self, f: F) -> R {
+            f(&mut self.bytes)
+        }
+    }
+
     #[derive(Debug)]
     pub struct UdpTxToken<'a> {
         driver: &'a UdpDriver,
-    }
-
-    impl RxToken for UdpRxToken {
-        fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, f: F) -> R {
-            let Self { mut bytes } = self;
-            f(&mut bytes)
-        }
     }
 
     impl TxToken for UdpTxToken<'_> {

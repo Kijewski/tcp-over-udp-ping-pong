@@ -10,7 +10,10 @@ ctrlc = { version = "3.4.6", features = ["termination"] }
 embassy-net = { version = "0.7.0", features = ["std", "alloc", "tcp", "proto-ipv4", "medium-ip", "log"] }
 embassy-time-driver = "0.2.0"
 flume = "0.11.1"
+futures-io = "0.3.31"
+futures-util = "0.3.31"
 scopeguard = "1.2.0"
 simple_logger = "5.0.0"
 tokio = { version = "1.45.0", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-util = "0.7.15"
+yamux = "0.13.4"
