@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::convert::Infallible;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::task::{Context, Waker};
 
@@ -8,32 +7,17 @@ use flume::{Receiver, Sender, TryRecvError, bounded};
 use tokio::net::UdpSocket;
 use tokio::{select, spawn};
 
+use super::cancel_token::{CancelSender, CancelToken};
+
 #[derive(Debug)]
 pub struct UdpDriver {
     queue_in: (Receiver<Box<[u8]>>, Arc<SyncMutex<VecDeque<Waker>>>),
     queue_out: Sender<Box<[u8]>>,
-    cancel_token: Option<(CancelSender, Arc<Receiver<Infallible>>)>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CancelSender(Arc<SyncMutex<Option<Sender<Infallible>>>>);
-
-impl CancelSender {
-    pub fn cancel(&self) {
-        let _ = self.0.lock().unwrap().take();
-    }
-}
-
-impl Drop for CancelSender {
-    fn drop(&mut self) {
-        self.cancel();
-    }
+    cancel_tx: Option<CancelSender>,
 }
 
 impl UdpDriver {
-    pub fn new(udp: Arc<UdpSocket>) -> Self {
-        let cancel_token = make_cancel_token();
-
+    pub fn new(udp: Arc<UdpSocket>, cancel_token: CancelToken) -> Self {
         let (in_tx, in_rx) = bounded(16);
         let waker_queue = Arc::new(SyncMutex::new(VecDeque::new()));
         spawn_recv_loop(
@@ -43,31 +27,21 @@ impl UdpDriver {
             Arc::clone(&waker_queue),
         );
 
+        let (cancel_tx, cancel_rx) = cancel_token;
         let (out_tx, out_rx) = bounded(16);
-        spawn_send_loop(udp, cancel_token.clone(), out_rx);
+        spawn_send_loop(udp, (cancel_tx.clone(), cancel_rx), out_rx);
 
         Self {
             queue_in: (in_rx, waker_queue),
             queue_out: out_tx,
-            cancel_token: Some(cancel_token),
+            cancel_tx: Some(cancel_tx),
         }
     }
-
-    pub fn cancel_token(&self) -> Option<(CancelSender, Arc<Receiver<Infallible>>)> {
-        self.cancel_token.clone()
-    }
-}
-
-fn make_cancel_token() -> (CancelSender, Arc<Receiver<Infallible>>) {
-    let (cancel_tx, cancel_rx) = bounded(1);
-    let cancel_tx = CancelSender(Arc::new(SyncMutex::new(Some(cancel_tx))));
-    let cancel_rx = Arc::new(cancel_rx);
-    (cancel_tx, cancel_rx)
 }
 
 fn spawn_recv_loop(
     udp: Arc<UdpSocket>,
-    cancel_token: (CancelSender, Arc<Receiver<Infallible>>),
+    cancel_token: CancelToken,
     bytes_queue: Sender<Box<[u8]>>,
     waker_queue: Arc<SyncMutex<VecDeque<Waker>>>,
 ) {
@@ -92,11 +66,7 @@ fn spawn_recv_loop(
     });
 }
 
-fn spawn_send_loop(
-    udp: Arc<UdpSocket>,
-    cancel_token: (CancelSender, Arc<Receiver<Infallible>>),
-    queue_out: Receiver<Box<[u8]>>,
-) {
+fn spawn_send_loop(udp: Arc<UdpSocket>, cancel_token: CancelToken, queue_out: Receiver<Box<[u8]>>) {
     spawn_cancellable(cancel_token, async move {
         loop {
             let bytes = match queue_out.recv_async().await {
@@ -115,14 +85,14 @@ fn spawn_send_loop(
 }
 
 fn spawn_cancellable<F: Future<Output: Send> + Send + 'static>(
-    (cancel_tx, cancel_rx): (CancelSender, Arc<Receiver<Infallible>>),
+    (cancel_tx, cancel_rx): CancelToken,
     fut: F,
 ) {
     spawn(async move {
         let _cancel_tx = cancel_tx;
         select! {
             biased;
-            _ = cancel_rx.recv_async() => (),
+            () = cancel_rx => (),
             _ = fut => (),
         }
     });
@@ -157,7 +127,12 @@ const _: () = {
         }
 
         fn link_state(&mut self, _: &mut Context) -> LinkState {
-            LinkState::Up
+            if let Some(cancel_tx) = &self.cancel_tx {
+                if !cancel_tx.is_cancelled() {
+                    return LinkState::Up;
+                }
+            }
+            LinkState::Down
         }
 
         fn capabilities(&self) -> Capabilities {
@@ -191,7 +166,7 @@ const _: () = {
         fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
             let mut bytes = vec![0; len].into_boxed_slice();
             let result = f(&mut bytes);
-            self.driver.queue_out.send(bytes).unwrap();
+            let _ = self.driver.queue_out.send(bytes);
             result
         }
     }
