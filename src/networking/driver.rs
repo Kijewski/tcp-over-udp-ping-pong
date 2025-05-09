@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::task::{Context, Waker};
 
+use crc::{CRC_64_ECMA_182, Crc};
 use embassy_net::driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};
 use flume::{Receiver, Sender, TryRecvError, bounded};
 use tokio::net::UdpSocket;
@@ -55,7 +56,24 @@ fn spawn_recv_loop(
                     break;
                 }
             };
-            if let Err(err) = bytes_queue.send_async(buf[..len].into()).await {
+
+            if len < size_of::<u64>() {
+                continue;
+            }
+            let Some(buf) = buf.get(..len) else {
+                continue;
+            };
+            let (front, back) = buf.split_at(size_of::<u64>());
+
+            let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
+            let mut digest = crc.digest();
+            digest.update(back);
+            let crc = digest.finalize().to_le_bytes();
+            if front != crc.as_slice() {
+                continue;
+            }
+
+            if let Err(err) = bytes_queue.send_async(back.into()).await {
                 dbg!(err);
                 break;
             }
@@ -68,6 +86,7 @@ fn spawn_recv_loop(
 
 fn spawn_send_loop(udp: Arc<UdpSocket>, cancel_token: CancelToken, queue_out: Receiver<Box<[u8]>>) {
     spawn_cancellable(cancel_token, async move {
+        let mut buf = vec![0; 1500];
         loop {
             let bytes = match queue_out.recv_async().await {
                 Ok(bytes) => bytes,
@@ -76,7 +95,19 @@ fn spawn_send_loop(udp: Arc<UdpSocket>, cancel_token: CancelToken, queue_out: Re
                     break;
                 }
             };
-            if let Err(err) = udp.send(&bytes).await {
+
+            let Some(buf) = buf.get_mut(..bytes.len() + size_of::<u64>()) else {
+                continue;
+            };
+            let (front, back) = buf.split_at_mut(size_of::<u64>());
+            back.copy_from_slice(&bytes);
+
+            let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
+            let mut digest = crc.digest();
+            digest.update(&bytes);
+            front.copy_from_slice(&digest.finalize().to_le_bytes());
+
+            if let Err(err) = udp.send(buf).await {
                 dbg!(err);
                 break;
             }

@@ -219,7 +219,7 @@ async fn execution(
             };
             sock.connect(remote_endpoint)
                 .await
-                .map_err(|_| InnerError::ImmediateShutdown(None))?
+                .map_err(|_| InnerError::ImmediateShutdown(None))?;
         }
         Kind::Server => {
             let local_endpoint = IpListenEndpoint {
@@ -228,7 +228,7 @@ async fn execution(
             };
             sock.accept(local_endpoint)
                 .await
-                .map_err(|_| InnerError::ImmediateShutdown(None))?
+                .map_err(|_| InnerError::ImmediateShutdown(None))?;
         }
     }
     let mut cfg = yamux::Config::default();

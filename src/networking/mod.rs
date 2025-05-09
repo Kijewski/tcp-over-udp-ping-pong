@@ -1,6 +1,6 @@
 mod cancel_token;
-mod multiplex;
 mod driver;
+mod multiplex;
 mod split_stream;
 mod time;
 
